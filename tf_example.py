@@ -1,7 +1,11 @@
 import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
+
 from sklearn.datasets import load_digits
+from sklearn.utils import shuffle
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import OneHotEncoder
 
 # Load the data set from sklearn
 def load_data():
@@ -11,80 +15,86 @@ def load_data():
     Y = digits.target.reshape(m, 1) # Need to reshape as numpy will return a 1D array otherwise
     return X, Y
 
+# Use this if you want to scale the image
 def scale(x, factor = 'auto'):
     if factor == 'auto':
         return x/x.max()
     else:
         return x/factor
 
+# Randomly shuffle the set and split it into test and train set
 def split(X, Y, ratio):
-    from sklearn.utils import shuffle
-    from sklearn.model_selection import train_test_split
     x, y = shuffle(X, Y)
     return train_test_split(x, y, test_size = ratio)
 
-X, Y = load_data()
-X = scale(X)
-x_train, x_test, y_train, y_test = split(X, Y, 0.2)
+# Perform one hot encoding on the labels
+def encode(z):
+    onehot = OneHotEncoder()
+    return onehot.fit_transform(z).toarray()
 
 
+D = 64 # dimensionality of input
+M = 32 # hidden layer size
+K = 10 # number of classes
 
 
-input_size = 64
-output_size = 10
-hidden_size = 32
+# tensor flow variables are not the same as regular Python variables
+def init_weights(shape):
+    return tf.Variable(tf.random_normal(shape, stddev=0.01))
 
-
-
-
-
-def init_params(shape):
-    weights = tf.Variable(tf.random_normal(shape, stddev = 0.01))
-
-
-
-
-# def forward(X, weights, biases):
-#     Z1 = tf.nn.relu(tf.matmul(X, weights['W1']) + biases['b1'])
-#     Y = tf.matmul(Z, weights['W2']) + biases['b2']
-#     return Y
 
 def forward(X, W1, b1, W2, b2):
-    Z1 = tf.nn.sigmoid(tf.matmul(X, W1) + b1)
-    return tf.matmul(Z1, W2) + b2
+    Z = tf.nn.relu(tf.matmul(X, W1) + b1)
+    return tf.matmul(Z, W2) + b2
 
-tfX = tf.placeholder(tf.float32, [None, input_size])
-tfY = tf.placeholder(tf.float32, [None, output_size])
+def main():
+    X, Y = load_data()
+    x_train, x_test, y_train, y_test = split(X, Y, 0.3)
 
-W1 = init_params([input_size, hidden_size])
-b1 = init_params([hidden_size])
-W2 = init_params([hidden_size, output_size])
-b2 = init_params([output_size])
+    y_train_org = y_train.copy().T[0] # Creating a copy of train data without one hot encoding. It will be used in checking the predictions
+    y_test_org = y_test.copy().T[0] # Creating a copy of test data without one hot encoding. It will be used in checking the predictions
 
-# weights = {
-#             'W1': init_params([hidden_size, input_size]),
-#             'W2': init_params([output_size, hidden_size])
-# }
-#
-# biases = {
-#             'b1': init_params([hidden_size, 1]),
-#             'b2': init_params([output_size, 1]),
-# }
-
-sess = tf.Session()
-init = tf.initialize_all_variables()
-sess.run(init)
-
-ypred = forward(tfX, W1, b1, W2, b2)
-cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels = tfY, logits = ypred))
-train_op = tf.train.GradientDescentOptimizer(0.01).minimize(cost)
-predict_op = tf.argmax(ypred, 1)
+    y_train = encode(y_train)
+    y_test = encode(y_test)
 
 
+    tfX = tf.placeholder(tf.float32, [None, D])
+    tfY = tf.placeholder(tf.float32, [None, K])
 
-for i in range(1000):
-    feed_dict = {tfX:x_train, tfY:y_train}
-    sess.run(train_op, feed_dict = feed_dict)
-    pred = sess.run(predict_op, feed_dict = feed_dict)
-    if i % 10 == 0:
-        print(np.mean(pred == Y))
+    W1 = init_weights([D, M]) # create symbolic variables
+    b1 = init_weights([M])
+    W2 = init_weights([M, K])
+    b2 = init_weights([K])
+
+    ypred = forward(tfX, W1, b1, W2, b2)
+
+    # It performs unscaled predictions. It internally performs softmax on the predictions. If used with softmax externally too, it will perform incorrectly.
+    cost = tf.reduce_mean(
+            tf.nn.softmax_cross_entropy_with_logits(labels=tfY, logits=ypred)
+            )
+
+    # The training operation is gradient descent with a learning rate of 0.05 to minimize the cost
+    train_op = tf.train.GradientDescentOptimizer(0.05).minimize(cost) # construct an
+
+    # Converts the predictions(probabilities) to class values(0, 1, ..., 9). The other input is the axis on which to perform max operation
+    predict_op = tf.argmax(ypred, 1)
+
+    # Create a session and initialize the tensorflow variables
+    sess = tf.Session()
+    init = tf.global_variables_initializer()
+    sess.run(init)
+
+    # Start the training
+    for i in range(500):
+        sess.run(train_op, feed_dict={tfX: x_train, tfY: y_train})
+        pred_train = sess.run(predict_op, feed_dict={tfX: x_train, tfY: y_train})
+        pred_test = sess.run(predict_op, feed_dict={tfX: x_test, tfY: y_test})
+        if i % 100 == 0:
+            print("Train Accuracy:", np.mean(y_train_org == pred_train))
+            print("Test Accuracy:", np.mean(y_test_org == pred_test))
+            print()
+
+
+
+if __name__ == '__main__':
+    main()
